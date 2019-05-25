@@ -70,27 +70,33 @@ exports.daily = functions.pubsub.schedule('5 11 * * *').onRun((event, context) =
       console.log("Error sending daily email: ", error)
     }));
   });
-  //final weekly solution with included ticker field
-  exports.weekly = functions.pubsub.schedule('* * * * 1').onRun((context) => {
-    db.collection(`/users/{userID}/notifications/{notificationID}`)
-      .where("read", "==", "false").where("ticker", "==", "weekly")
-      .get()  
-      .then(function(querySnapshot) {
-          querySnapshot.forEach(function(documentSnapshot) {
-            var data = documentSnapshot.data()
-            var userID = event.params.userID
-            var db = admin.firestore()
-            var e = userID.email;
-            const msg = {
-              to: e,
-              from: "//WHATEVER EMAIL WE ARE USING",
-              subject: data.message
-              //add the email template from SendGrid here, still tweaking
-            };
-            return sgMail.send(msg);
-          })
-      }
-      .catch(function(error) {
-        console.log("Error sending weekly email: ", error)
-      }));
-    });
+//final weekly solution with included ticker field
+exports.weekly = functions.pubsub.schedule('* * * * 1').onRun((event, context) => {
+  db.collection(`/users/{userID}/notifications/{notificationID}`)
+    .where("read", "==", "false").where("ticker", "==", "daily")
+    .get()  
+    .then(function(querySnapshot) {
+        querySnapshot.forEach(function(documentSnapshot) {
+          var data = documentSnapshot.data()
+          var userID = event.params.userID
+          var db = admin.firestore()
+          var e = userID.email;
+          const msg = {
+            to: e,
+            from: "//WHATEVER EMAIL WE ARE USING",
+            subject: data.message,
+            //custom template
+            templateID: 'd-faf87202a4a64712933c5beb20c4021d',
+            substitionWrappers: ['{{', '}}'],
+            substitutions: {
+            name: userID.name,
+            message: noti.message
+          }
+          };
+          return sgMail.send(msg);
+        })
+    }
+    .catch(function(error) {
+      console.log("Error sending daily email: ", error)
+    }));
+  });
