@@ -1,102 +1,158 @@
-//Firestore imports
-const cron = require('node-schedule');
+/**
+ * Copyright 2015 Google Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 const functions = require('firebase-functions');
-const admin = require('firebase-admin');
+const admin = require('firebase-admin')
+const nodemailer = require('nodemailer');
+const fs = require('fs')
+
 admin.initializeApp();
-const SENDGRID_API_KEY = functions.config().sendgrid.key;
 
-const sgMail = require('@sendgrid/mail');
-sgMail.setApiKey(SENDGRID_API_KEY);
+// Configure the email transport using the default SMTP transport and a GMail account.
+// For Gmail, enable these:
+// 1. https://www.google.com/settings/security/lesssecureapps
+// 2. https://accounts.google.com/DisplayUnlockCaptcha
+// For other types of transports such as Sendgrid see https://nodemailer.com/transports/
+// TODO: Configure the `gmail.email` and `gmail.password` Google Cloud environment variables.
+const gmailEmail = functions.config().gmail.email;
+const gmailPassword = functions.config().gmail.password;
+const mailTransport = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: gmailEmail,
+    pass: gmailPassword,
+  },
+});
 
-var data = admin.firestore()
+// Your company name to include in the emails
+// TODO: Change this to your app or company name to customize the email sent.
+const APP_NAME = 'Insider WORKS';
 
-//sends an email for each new notification added to a users notification document
-exports.newNoti = functions.firestore
-  .document('/users/{userID}/notifications/{notificationID}')
-  .onCreate( (context, event) => {
+// [START sendWelcomeEmail]
+/**
+ * Sends a welcome email to new user.
+ */
+// [START onCreateTrigger]
+exports.sendWelcomeEmail = functions.auth.user().onCreate((user) => {
+// [END onCreateTrigger]
+  // [START eventAttributes]
+  const email = user.email; // The email of the user.
+  const displayName = user.displayName; // The display name of the user.
+  // [END eventAttributes]
+
+  return sendWelcomeEmail(email, displayName);
+});
+// [END sendWelcomeEmail]
+
+// [START sendByeEmail]
+/**
+ * Send an account deleted email confirmation to users who delete their accounts.
+ */
+// [START onDeleteTrigger]
+exports.sendByeEmail = functions.auth.user().onDelete((user) => {
+// [END onDeleteTrigger]
+  const email = user.email;
+  const displayName = user.displayName;
+
+  return sendGoodbyeEmail(email, displayName);
+});
+// [END sendByeEmail]
+
+// Sends a welcome email to the given user.
+async function sendWelcomeEmail(email, displayName) {
+  const mailOptions = {
+    from: `${APP_NAME} <noreply@firebase.com>`,
+    to: email,
+  };
+
+  // The user subscribed to the newsletter.
+  mailOptions.subject = `Welcome to ${APP_NAME}!`;
+  mailOptions.text = `Hey ${displayName || ''}! Welcome to ${APP_NAME}. I hope you will enjoy our service.`;
+  await mailTransport.sendMail(mailOptions);
+  console.log('New welcome email sent to:', email);
+  return null;
+}
+
+// Sends a goodbye email to the given user.
+async function sendGoodbyeEmail(email, displayName) {
+  const mailOptions = {
+    from: `${APP_NAME} <noreply@firebase.com>`,
+    to: email,
+  };
+
+  // The user unsubscribed to the newsletter.
+  mailOptions.subject = `Bye!`;
+  mailOptions.text = `Hey ${displayName || ''}!, We confirm that we have deleted your ${APP_NAME} account.`;
+  await mailTransport.sendMail(mailOptions);
+  console.log('Account deletion confirmation email sent to:', email);
+  return null;
+}
+// NOTES
+
+//implement whereEqualTo method to query notifications on "read" == "false"
+//send email to this compound group query (issues: you will get an email each time
+//you get a new project, and repeated ones for each new project (duplicates over time)
+//maybe scale this into two listener methods
+
+//END NOTES
+
+//trigger condition and routing path
+exports.userSend = functions.firestore
+  .document('users/{userID}/notifications/{notificationID}').onWrite(event => {
+    //grabs dynamic variables inside query structure and injects into the query
+    const userID = event.params.userID;
     const notificationID = event.params.notificationID;
-    const user = event.params.userID;
-    const fsdb = admin.firestore();
-    return fsdb.collection('notifications')
-      .doc(notificationID)
+    //returns a query of notification documents that haven't been read
+    return admin.firestore().collection('users').doc(userID).collection('notifications')
+      .doc(notificationID).where("read", "==", "false")
       .get()
-      .then(doc => {
-        const noti= doc.data()
-        const msg = {
-          to: user.email,
-          from: 'noreply@insider.works',
-          subject: noti.message,
-          //custom template
-          templateID: 'd-faf87202a4a64712933c5beb20c4021d',
-          substitionWrappers: ['{{', '}}'],
-          substitutions: {
-            name: user.name,
-            message: noti.message
-          }
-        };
-        return sgMail.send(msg);
-      })
-      .then(() => console.log('Email sent!'))
-      .catch(err => console.log('Error: ', err))
+      .then(queryResult => {
+        const receiverID = queryResult.data().receiverID;
+        const receiverEmail = receiverID.email;
+        const receiverName = receiverID.name;
+        return sendNewNoti(receiverEmail, receiverName);
+    })
   });
 
-//final daily solution with included ticker field
-exports.daily = functions.pubsub.schedule('5 11 * * *').onRun((event, context) => {
-  db.collection('/users/{userID}/notifications/{notificationID}')
-    .where('read', '==', 'false').where('ticker', '==', 'daily')
-    .get()  
-    .then(function(querySnapshot) {
-        querySnapshot.forEach(function(documentSnapshot) {
-          var data = documentSnapshot.data()
-          var userID = event.params.userID
-          var db = admin.firestore()
-          var e = userID.email;
-          const msg = {
-            to: e,
-            from: 'noreply@insider.works',
-            subject: data.message,
-            //custom template
-            templateID: 'd-faf87202a4a64712933c5beb20c4021d',
-            substitionWrappers: ['{{', '}}'],
-            substitutions: {
-            name: userID.name,
-            message: noti.message
-          }
-          };
-          return sgMail.send(msg);
-        })
-    }
-    .catch(function(error) {
-      console.log('Error sending daily email: ', error)
-    }));
+exports.projSend = functions.firestore
+  .document('projects/{projectID}/notifications/{notificationID}').onWrite(event => {
+    const projectID = event.params.projectID;
+    const notificationID = event.params.notificationID;
+    //same as userSend method with data-specific query triggered on event
+    return admin.firestore().collection('projects').doc(projectID)
+    .collection('notifications').doc(notificationID).where("read", "==", "false")
+      .get()
+      .then(queryResult => {
+        const receiverID = queryResult.data().receiverID;
+        const receiverEmail = receiverID.email;
+        const receiverName = receiverID.name;
+        return sendNewNoti(receiverEmail, receiverName);
+      })
   });
-//final weekly solution with included ticker field
-exports.weekly = functions.pubsub.schedule('* * * * 1').onRun((event, context) => {
-  db.collection('/users/{userID}/notifications/{notificationID}')
-    .where('read', '==', 'false').where('ticker', '==', 'daily')
-    .get()  
-    .then(function(querySnapshot) {
-        querySnapshot.forEach(function(documentSnapshot) {
-          var data = documentSnapshot.data()
-          var userID = event.params.userID
-          var db = admin.firestore()
-          var e = userID.email;
-          const msg = {
-            to: e,
-            from: '//noreply@insider.works',
-            subject: data.message,
-            //custom template
-            templateID: 'd-faf87202a4a64712933c5beb20c4021d',
-            substitionWrappers: ['{{', '}}'],
-            substitutions: {
-            name: userID.name,
-            message: noti.message
-          }
-          };
-          return sgMail.send(msg);
-        })
-    }
-    .catch(function(error) {
-      console.log('Error sending daily email: ', error)
-    }));
-  });
+
+async function sendNewNoti(email, displayName) {
+  const mailOptions = {
+    from: `insider.works.noreply@gmail.com`,
+    to: email
+  };
+
+  mailOptions.subject = `New Notification from Insider.WORKS!`;
+  mailOptions.text = `Hey ${displayName || ''}!, you have received a new notification 
+                                            on your ${APP_NAME} account!`
+  await mailTransport.sendMail(mailOptions);
+  console.log('Account notification confirmation email sent to:', email);
+  return null; 
+}
