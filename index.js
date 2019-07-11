@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-const functions = require('firebase-functions');
-const admin = require('firebase-admin')
-const nodemailer = require('nodemailer');
-const fs = require('fs')
+const functions = require("firebase-functions");
+const admin = require("firebase-admin");
+const nodemailer = require("nodemailer");
+const fs = require("fs");
 
 admin.initializeApp();
-
+const db = admin.firestore();
 // Configure the email transport using the default SMTP transport and a GMail account.
 // For Gmail, enable these:
 // 1. https://www.google.com/settings/security/lesssecureapps
@@ -30,23 +30,24 @@ admin.initializeApp();
 const gmailEmail = functions.config().gmail.email;
 const gmailPassword = functions.config().gmail.password;
 const mailTransport = nodemailer.createTransport({
-  service: 'gmail',
+  service: "gmail",
   auth: {
     user: gmailEmail,
-    pass: gmailPassword,
-  },
+    pass: gmailPassword
+  }
 });
 
 // Your company name to include in the emails
-const APP_NAME = 'Insider WORKS';
+// TODO: Change this to your app or company name to customize the email sent.
+const APP_NAME = "Insider WORKS";
 
 // [START sendWelcomeEmail]
 /**
  * Sends a welcome email to new user.
  */
 // [START onCreateTrigger]
-exports.sendWelcomeEmail = functions.auth.user().onCreate((user) => {
-// [END onCreateTrigger]
+exports.sendWelcomeEmail = functions.auth.user().onCreate(user => {
+  // [END onCreateTrigger]
   // [START eventAttributes]
   const email = user.email; // The email of the user.
   const displayName = user.displayName; // The display name of the user.
@@ -61,8 +62,8 @@ exports.sendWelcomeEmail = functions.auth.user().onCreate((user) => {
  * Send an account deleted email confirmation to users who delete their accounts.
  */
 // [START onDeleteTrigger]
-exports.sendByeEmail = functions.auth.user().onDelete((user) => {
-// [END onDeleteTrigger]
+exports.sendByeEmail = functions.auth.user().onDelete(user => {
+  // [END onDeleteTrigger]
   const email = user.email;
   const displayName = user.displayName;
 
@@ -74,14 +75,15 @@ exports.sendByeEmail = functions.auth.user().onDelete((user) => {
 async function sendWelcomeEmail(email, displayName) {
   const mailOptions = {
     from: `${APP_NAME} <noreply@firebase.com>`,
-    to: email,
+    to: email
   };
 
   // The user subscribed to the newsletter.
   mailOptions.subject = `Welcome to ${APP_NAME}!`;
-  mailOptions.text = `Hey ${displayName || ''}! Welcome to ${APP_NAME}. I hope you will enjoy our service.`;
+  mailOptions.text = `Hey ${displayName ||
+    ""}! Welcome to ${APP_NAME}. I hope you will enjoy our service.`;
   await mailTransport.sendMail(mailOptions);
-  console.log('New welcome email sent to:', email);
+  console.log("New welcome email sent to:", email);
   return null;
 }
 
@@ -89,14 +91,15 @@ async function sendWelcomeEmail(email, displayName) {
 async function sendGoodbyeEmail(email, displayName) {
   const mailOptions = {
     from: `${APP_NAME} <noreply@firebase.com>`,
-    to: email,
+    to: email
   };
 
   // The user unsubscribed to the newsletter.
   mailOptions.subject = `Bye!`;
-  mailOptions.text = `Hey ${displayName || ''}!, We confirm that we have deleted your ${APP_NAME} account.`;
+  mailOptions.text = `Hey ${displayName ||
+    ""}!, We confirm that we have deleted your ${APP_NAME} account.`;
   await mailTransport.sendMail(mailOptions);
-  console.log('Account deletion confirmation email sent to:', email);
+  console.log("Account deletion confirmation email sent to:", email);
   return null;
 }
 // NOTES
@@ -108,50 +111,76 @@ async function sendGoodbyeEmail(email, displayName) {
 
 //END NOTES
 
+exports.newNoti2 = functions.firestore
+  .document("users/{userID}/notifications/{notificationID}")
+  .onCreate((change, context) => {
+    const userID = context.params.userID;
+    const notificationID = context.params.notificationID;
+    const message = notificationID.message;
+    const receiverID = notificationID.receiverID;
+    //method information
+    const receiverName = receiverID.name;
+    const receiverEmail = receiverID.email;
+    const emailMessage = notificationID.message;
+
+    return sendNewNoti(receiverEmail, receiverName, emailMessage);
+  });
+
 //trigger condition and routing path
 exports.userSend = functions.firestore
-  .document('users/{userID}/notifications/{notificationID}').onWrite(event => {
+  .document("users/{userID}/notifications/{notificationID}")
+  .onWrite((change, context) => {
     //grabs dynamic variables inside query structure and injects into the query
-    const userID = event.params.userID;
-    const notificationID = event.params.notificationID;
+    const userID = context.params.userID;
+    const notificationID = context.params.notificationID;
+    let outerRef = db
+      .collection("users")
+      .doc(userID)
+      .collection("notifications");
+    let innerRef = outerRef.where("read", "==", false);
+
     //returns a query of notification documents that haven't been read
-    return admin.firestore().collection('users').doc(userID).collection('notifications')
-      .doc(notificationID).where("read", "==", "false")
-      .get()
-      .then(queryResult => {
-        const receiverID = queryResult.data().receiverID;
-        const receiverEmail = receiverID.email;
-        const receiverName = receiverID.name;
-        return sendNewNoti(receiverEmail, receiverName);
-    })
+    return innerRef.get().then((change, context) => {
+      const receiverID = context.params.receiverID;
+      const receiverEmail = receiverID.email;
+      const receiverName = receiverID.name;
+      const message = notificationID.message;
+      return sendNewNoti(receiverEmail, receiverName, message);
+    });
   });
 
 exports.projSend = functions.firestore
-  .document('projects/{projectID}/notifications/{notificationID}').onWrite(event => {
-    const projectID = event.params.projectID;
-    const notificationID = event.params.notificationID;
+  .document("projects/{projectID}/notifications/{notificationID}")
+  .onWrite((change, context) => {
+    const projectID = context.params.projectID;
+    const notificationID = context.params.notificationID;
     //same as userSend method with data-specific query triggered on event
-    return admin.firestore().collection('projects').doc(projectID)
-    .collection('notifications').doc(notificationID).where("read", "==", "false")
+    return admin
+      .firestore()
+      .collection("projects")
+      .doc(projectID)
+      .collection("notifications")
+      .doc(notificationID)
+      .where("read", "==", "false")
       .get()
       .then(queryResult => {
         const receiverID = queryResult.data().receiverID;
         const receiverEmail = receiverID.email;
         const receiverName = receiverID.name;
-        return sendNewNoti(receiverEmail, receiverName);
-      })
+        const message = receiverID.message;
+        return sendNewNoti(receiverEmail, receiverName, message);
+      });
   });
 
-async function sendNewNoti(email, displayName) {
+async function sendNewNoti(email, displayName, message) {
   const mailOptions = {
     from: `insider.works.noreply@gmail.com`,
     to: email
   };
 
   mailOptions.subject = `New Notification from Insider.WORKS!`;
-  mailOptions.text = `Hey ${displayName || ''}!, you have received a new notification 
-                                            on your ${APP_NAME} account!`
+  mailOptions.text = `Hey ${displayName || ""}!, ${message}`;
   await mailTransport.sendMail(mailOptions);
-  console.log('Account notification confirmation email sent to:', email);
-  return null; 
+  console.log("Account notification confirmation email sent to:", email);
+  return null;
 }
