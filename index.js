@@ -126,6 +126,21 @@ exports.newNoti2 = functions.firestore
     return sendNewNoti(receiverEmail, receiverName, emailMessage);
   });
 
+exports.newNoti3 = functions.firestore
+  .document("projects/{projectID}/notifications/{notificationID}")
+  .onCreate((change, context) => {
+    const userID = context.params.userID;
+    const notificationID = context.params.notificationID;
+    const message = notificationID.message;
+    const receiverID = notificationID.receiverID;
+    //method information
+    const receiverName = receiverID.name;
+    const receiverEmail = receiverID.email;
+    const emailMessage = notificationID.message;
+
+    return sendNewNoti(receiverEmail, receiverName, emailMessage);
+  });
+
 //trigger condition and routing path
 exports.userSend = functions.firestore
   .document("users/{userID}/notifications/{notificationID}")
@@ -155,21 +170,19 @@ exports.projSend = functions.firestore
     const projectID = context.params.projectID;
     const notificationID = context.params.notificationID;
     //same as userSend method with data-specific query triggered on event
-    return admin
-      .firestore()
+    let outerRef = db
       .collection("projects")
       .doc(projectID)
-      .collection("notifications")
-      .doc(notificationID)
-      .where("read", "==", "false")
-      .get()
-      .then(queryResult => {
-        const receiverID = queryResult.data().receiverID;
-        const receiverEmail = receiverID.email;
-        const receiverName = receiverID.name;
-        const message = receiverID.message;
-        return sendNewNoti(receiverEmail, receiverName, message);
-      });
+      .collection("notifications");
+    let innerRef = outerRef.where("read", "==", false);
+
+    return innerRef.get().then((change, context) => {
+      const receiverID = context.params.receiverID;
+      const receiverEmail = receiverID.email;
+      const receiverName = receiverID.name;
+      const message = notificationID.message;
+      return sendNewNoti(receiverEmail, receiverName, message);
+    })
   });
 
 async function sendNewNoti(email, displayName, message) {
