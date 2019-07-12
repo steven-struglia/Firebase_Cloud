@@ -37,8 +37,7 @@ const mailTransport = nodemailer.createTransport({
   }
 });
 
-// Your company name to include in the emails
-// TODO: Change this to your app or company name to customize the email sent.
+// Company name to include in the emails
 const APP_NAME = "Insider WORKS";
 
 // [START sendWelcomeEmail]
