@@ -37,31 +37,20 @@ const mailTransport = nodemailer.createTransport({
   }
 });
 
-// Your company name to include in the emails
 // TODO: Change this to your app or company name to customize the email sent.
 const APP_NAME = "Insider WORKS";
 
-// [START sendWelcomeEmail]
 /**
  * Sends a welcome email to new user.
  */
-// [START onCreateTrigger]
 exports.sendWelcomeEmail = functions.auth.user().onCreate(user => {
-  // [END onCreateTrigger]
-  // [START eventAttributes]
   const email = user.email; // The email of the user.
   const displayName = user.displayName; // The display name of the user.
-  // [END eventAttributes]
-
   return sendWelcomeEmail(email, displayName);
 });
-// [END sendWelcomeEmail]
-
-// [START sendByeEmail]
 /**
  * Send an account deleted email confirmation to users who delete their accounts.
  */
-// [START onDeleteTrigger]
 exports.sendByeEmail = functions.auth.user().onDelete(user => {
   // [END onDeleteTrigger]
   const email = user.email;
@@ -69,7 +58,6 @@ exports.sendByeEmail = functions.auth.user().onDelete(user => {
 
   return sendGoodbyeEmail(email, displayName);
 });
-// [END sendByeEmail]
 
 // Sends a welcome email to the given user.
 async function sendWelcomeEmail(email, displayName) {
@@ -102,87 +90,84 @@ async function sendGoodbyeEmail(email, displayName) {
   console.log("Account deletion confirmation email sent to:", email);
   return null;
 }
-// NOTES
 
-//implement whereEqualTo method to query notifications on "read" == "false"
-//send email to this compound group query (issues: you will get an email each time
-//you get a new project, and repeated ones for each new project (duplicates over time)
-//maybe scale this into two listener methods
-
-//END NOTES
-
-exports.newNoti2 = functions.firestore
+exports.userNotiCreate = functions.firestore
   .document("users/{userID}/notifications/{notificationID}")
   .onCreate((change, context) => {
+    console.log(context.params.userID);
+    console.log(context.params.notificationID);
+
     const userID = context.params.userID;
-    const notificationID = context.params.notificationID;
-    const message = notificationID.message;
-    const receiverID = notificationID.receiverID;
-    //method information
-    const receiverName = receiverID.name;
-    const receiverEmail = receiverID.email;
-    const emailMessage = notificationID.message;
-
-    return sendNewNoti(receiverEmail, receiverName, emailMessage);
-  });
-
-exports.newNoti3 = functions.firestore
-  .document("projects/{projectID}/notifications/{notificationID}")
-  .onCreate((change, context) => {
-    const userID = context.params.userID;
-    const notificationID = context.params.notificationID;
-    const message = notificationID.message;
-    const receiverID = notificationID.receiverID;
-    //method information
-    const receiverName = receiverID.name;
-    const receiverEmail = receiverID.email;
-    const emailMessage = notificationID.message;
-
-    return sendNewNoti(receiverEmail, receiverName, emailMessage);
-  });
-
-//trigger condition and routing path
-exports.userSend = functions.firestore
-  .document("users/{userID}/notifications/{notificationID}")
-  .onWrite((change, context) => {
-    //grabs dynamic variables inside query structure and injects into the query
-    const userID = context.params.userID;
-    const notificationID = context.params.notificationID;
-    let outerRef = db
+    const gen = change.data();
+    const message = gen.message;
+    //dynamic grab
+    const userObj = db
       .collection("users")
       .doc(userID)
-      .collection("notifications");
-    let innerRef = outerRef.where("read", "==", false);
-
-    //returns a query of notification documents that haven't been read
-    return innerRef.get().then((change, context) => {
-      const receiverID = context.params.receiverID;
-      const receiverEmail = receiverID.email;
-      const receiverName = receiverID.name;
-      const message = notificationID.message;
-      return sendNewNoti(receiverEmail, receiverName, message);
-    });
+      .get()
+      .then(function(doc) {
+        if (doc.exists) {
+          console.log("Document grab .data():", doc.data());
+          const docSnap = doc.data();
+          const email = docSnap.email;
+          const name = docSnap.name;
+          console.log(email, name, message);
+          return sendNewNoti(email, name, message);
+        } else {
+          //doc.data() is undefined
+          console.log("No such document, rework");
+        }
+      });
+    return null;
   });
 
-exports.projSend = functions.firestore
+exports.projNotiCreate = functions.firestore
   .document("projects/{projectID}/notifications/{notificationID}")
-  .onWrite((change, context) => {
+  .onCreate((change, context) => {
+    console.log(context.params.projectID);
+    console.log(context.params.notificationID);
+    var members = [];
     const projectID = context.params.projectID;
-    const notificationID = context.params.notificationID;
-    //same as userSend method with data-specific query triggered on event
-    let outerRef = db
+    const gen = change.data();
+    const message = gen.message;
+    //dynamic grab
+    const projObj = db
       .collection("projects")
       .doc(projectID)
-      .collection("notifications");
-    let innerRef = outerRef.where("read", "==", false);
-
-    return innerRef.get().then((change, context) => {
-      const receiverID = context.params.receiverID;
-      const receiverEmail = receiverID.email;
-      const receiverName = receiverID.name;
-      const message = notificationID.message;
-      return sendNewNoti(receiverEmail, receiverName, message);
-    })
+      .get()
+      .then(function(doc) {
+        if (doc.exists) {
+          //this represents the overall projectID specific document JSON
+          const docSnap = doc.data();
+          //call to this JSON for field values to compare members against read list
+          const membersTemp = docSnap.members;
+          membersTemp.forEach(element => {
+            members.push(element);
+          });
+          console.log(members);
+          //loops through each member of the project and notifies them of the projNoti
+          members.forEach(element => {
+            const addition = db
+              .collection("users")
+              .doc(element)
+              .get()
+              .then(function(doc) {
+                if (doc.exists) {
+                  const userSnap = doc.data();
+                  const email = userSnap.email;
+                  const name = userSnap.name;
+                  console.log(email, name);
+                  return sendNewNoti(email, name, message);
+                } else {
+                  console.log("No such element, rework");
+                }
+              });
+          });
+        } else {
+          console.log("No such document, rework");
+        }
+      });
+    return null;
   });
 
 async function sendNewNoti(email, displayName, message) {
@@ -192,8 +177,8 @@ async function sendNewNoti(email, displayName, message) {
   };
 
   mailOptions.subject = `New Notification from Insider.WORKS!`;
-  mailOptions.text = `Hey ${displayName || ""}!, ${message}`;
+  mailOptions.text = `Hey ${displayName || ""}, ${message}`;
   await mailTransport.sendMail(mailOptions);
   console.log("Account notification confirmation email sent to:", email);
-  return null;
+  return 0;
 }
