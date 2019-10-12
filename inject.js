@@ -182,3 +182,5 @@ async function sendNewNoti(email, displayName, message) {
   console.log("Account notification confirmation email sent to:", email);
   return 0;
 }
+
+//DOCUMENTATION TO BE ADDED LATER
